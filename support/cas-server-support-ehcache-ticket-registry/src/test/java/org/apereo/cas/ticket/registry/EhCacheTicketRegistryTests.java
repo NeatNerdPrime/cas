@@ -24,15 +24,19 @@ import org.apereo.cas.logout.config.CasCoreLogoutConfiguration;
 
 import lombok.SneakyThrows;
 import lombok.val;
+import net.sf.ehcache.CacheManager;
 import net.sf.ehcache.distribution.CacheReplicator;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.cache.ehcache.EhCacheCacheManager;
 import org.springframework.cloud.autoconfigure.RefreshAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 /**
@@ -77,6 +81,14 @@ public class EhCacheTicketRegistryTests extends BaseTicketRegistryTests {
     @Qualifier("ticketRegistry")
     private TicketRegistry ticketRegistry;
 
+    @Autowired
+    @Qualifier("ehcacheTicketCacheManager")
+    private CacheManager ehcacheTicketCacheManager;
+
+    @Autowired
+    @Qualifier("ehCacheCacheManager")
+    private EhCacheCacheManager ehCacheCacheManager;
+
     @Override
     public TicketRegistry getNewTicketRegistry() {
         return ticketRegistry;
@@ -95,4 +107,10 @@ public class EhCacheTicketRegistryTests extends BaseTicketRegistryTests {
             return replicator;
         }
     }
+
+    @Test
+    public void ensureSpringCacheWrapperIsInitialized() {
+        assertEquals(ehCacheCacheManager.getCacheNames().size(), ehcacheTicketCacheManager.getCacheNames().length);
+    }
+
 }

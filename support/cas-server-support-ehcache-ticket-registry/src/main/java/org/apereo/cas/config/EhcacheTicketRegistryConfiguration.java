@@ -170,11 +170,11 @@ public class EhcacheTicketRegistryConfiguration {
             ehCacheManager.addDecoratedCacheIfAbsent(ehcache);
         });
 
+        manager.initializeCaches();
+
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("The following caches are available: [{}]", manager.getCacheNames());
         }
-
-        manager.initializeCaches();
 
         return new EhCacheTicketRegistry(ticketCatalog, ehCacheManager, CoreTicketUtils.newTicketRegistryCipherExecutor(crypto, "ehcache"));
     }
