@@ -1,16 +1,16 @@
 ---
 type: specs.openrewrite.org/v1beta/recipe
-name: org.apereo.cas.cas710
-displayName: Upgrade CAS to version 7.1.0
+name: org.apereo.cas.cas710-RC6
+displayName: Upgrade CAS to version 7.1.0-RC6
 recipeList:
   - org.openrewrite.gradle.AddProperty:
       key: cas.version
-      value: 7.1.0
+      value: 7.1.0-RC6
       overwrite: true
       filePattern: 'gradle.properties'
   - org.openrewrite.gradle.AddProperty:
       key: version
-      value: 7.1.0
+      value: 7.1.0-RC6
       overwrite: true
       filePattern: 'gradle.properties'
   - org.openrewrite.gradle.AddProperty:

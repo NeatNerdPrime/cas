@@ -1,3 +1,5 @@
+const DEFAULT_INTERVAL = 15000;
+
 /**
  * Internal Functions
  */
@@ -13,7 +15,8 @@ const Tabs = {
     PERSON_DIRECTORY: 8,
     AUTHENTICATION: 9,
     CONSENT: 10,
-    PROTOCOLS: 11
+    PROTOCOLS: 11,
+    THROTTLES: 12
 };
 
 /**
@@ -64,6 +67,11 @@ function fetchServices(callback) {
                     serviceDetails += `&nbsp;<a target="_blank" href='${service.privacyUrl}'>Privacy URL</a>`;
                 }
 
+                let serviceIdDetails = `<span serviceId='${service.id}' class="text-wrap">${service.serviceId}</span>`;
+                if (serviceClass.includes("SamlRegisteredService")) {
+                    serviceIdDetails += `<br><p><a href='${service.metadataLocation}' target='_blank'>Metadata Location</a>`;
+                }
+
                 let serviceButtons = `
                  <button type="button" name="editService" href="#" serviceId='${service.id}'
                         class="mdc-button mdc-button--raised btn btn-link min-width-32x">
@@ -81,7 +89,7 @@ function fetchServices(callback) {
                 applicationsTable.row.add({
                     0: `<i serviceId='${service.id}' title='${serviceClass}' class='mdi ${icon}'></i>`,
                     1: `${serviceDetails}`,
-                    2: `<span serviceId='${service.id}' class="text-wrap">${service.serviceId}</span>`,
+                    2: `${serviceIdDetails}`,
                     3: `<span serviceId='${service.id}' class="text-wrap">${service.description ?? ""}</span>`,
                     4: `<span serviceId='${service.id}'>${serviceButtons.trim()}</span>`
                 });
@@ -249,13 +257,37 @@ async function initializeAccessStrategyOperations() {
     });
 }
 
+function hideErrorInBanner() {
+    const snackbar = new mdc.snackbar.MDCSnackbar(document.getElementById("errorBanner"));
+    snackbar.close();
+}
+
 function displayErrorInBanner(error) {
-    $("#errorBanner").removeClass("d-none");
-    let message = `HTTP error: ${error.status}. `;
-    if (error.hasOwnProperty("path")) {
-        message += `Unable to make an API call to <code>${error.path}</code>. Is the endpoint enabled and available?`;
+    let message = "";
+    switch (error.status) {
+    case 401:
+        message = "You are not authorized to access this resource. Are you sure you are authenticated?";
+        break;
+    case 403:
+        message = "You are forbidden from accessing this resource. Are you sure you have the necessary permissions and the entry is correctly regstered with CAS?";
+        break;
+    case 400:
+    case 500:
+        message = "Unable to process or accept the request. Check CAS server logs for details.";
+        break;
+    case 0:
+        message = "Unable to contact the CAS server. Are you sure the server is reachable?";
+        break;
+    default:
+        message = `HTTP error: ${error.status}. `;
+        break;
     }
-    $("#errorDetails").empty().html(message);
+    if (error.hasOwnProperty("path")) {
+        message += `Unable to make an API call to ${error.path}. Is the endpoint enabled and available?`;
+    }
+    const snackbar = new mdc.snackbar.MDCSnackbar(document.getElementById("errorBanner"));
+    snackbar.labelText = message;
+    snackbar.open();
 }
 
 function initializeJvmMetrics() {
@@ -326,6 +358,25 @@ function initializeJvmMetrics() {
 }
 
 async function initializeScheduledTasksOperations() {
+
+    const threadDumpTable = $("#threadDumpTable").DataTable({
+        pageLength: 10,
+        autoWidth: false,
+        columnDefs: [
+            {width: "5%", targets: 0},
+            {width: "35%", targets: 1},
+            {width: "30%", targets: 2},
+            {width: "10%", targets: 3},
+            {width: "10%", targets: 4},
+            {width: "10%", targets: 5},
+        ],
+        drawCallback: settings => {
+            $("#threadDumpTable tr").addClass("mdc-data-table__row");
+            $("#threadDumpTable td").addClass("mdc-data-table__cell");
+        }
+    });
+
+
     const groupColumn = 0;
     const scheduledtasks = $("#scheduledTasksTable").DataTable({
         pageLength: 25,
@@ -386,7 +437,34 @@ async function initializeScheduledTasksOperations() {
 
     if (actuatorEndpoints.metrics) {
         initializeJvmMetrics();
-        setInterval(() => initializeJvmMetrics(), 5000);
+        setInterval(() => initializeJvmMetrics(), DEFAULT_INTERVAL);
+    }
+
+    function fetchThreadDump() {
+        $.get(actuatorEndpoints.threaddump, response => {
+            console.log(response);
+            threadDumpTable.clear();
+            for (const thread of response.threads) {
+                threadDumpTable.row.add({
+                    0: `<code>${thread.threadId}</code>`,
+                    1: `<code>${thread.threadName}</code>`,
+                    2: `<code>${thread.threadState}</code>`,
+                    3: `<code>${thread.priority}</code>`,
+                    4: `<code>${thread.daemon}</code>`,
+                    5: `<code>${thread.suspended}</code>`,
+                });
+            }
+            threadDumpTable.draw();
+        }).fail((xhr, status, error) => {
+            console.error("Error fetching data:", error);
+            displayErrorInBanner(xhr);
+        });
+    }
+
+
+    if (actuatorEndpoints.threaddump) {
+        fetchThreadDump();
+        setInterval(() => fetchThreadDump(), DEFAULT_INTERVAL);
     }
 }
 
@@ -420,7 +498,7 @@ async function initializeTicketsOperations() {
     });
 
     $("button#cleanTicketsButton").off().on("click", () => {
-
+        hideErrorInBanner();
         if (actuatorEndpoints.ticketregistry) {
             $.ajax({
                 url: `${actuatorEndpoints.ticketregistry}/clean`,
@@ -1133,7 +1211,7 @@ async function initializeSystemOperations() {
         configureSystemData();
         configureHealthChart();
         configureStatistics();
-    }, 5000);
+    }, DEFAULT_INTERVAL);
 
     if (actuatorEndpoints.casFeatures) {
         $.get(actuatorEndpoints.casFeatures, response => {
@@ -1424,7 +1502,15 @@ async function initializeAllCharts() {
         }
     });
     auditEventsChart = new Chart(document.getElementById("auditEventsChart").getContext("2d"), {
-        type: "bar"
+        type: "bar",
+        options: {
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Audit Events'
+                }
+            }
+        }
     });
     auditEventsChart.update();
 
@@ -1443,6 +1529,14 @@ async function initializeAllCharts() {
                     borderWidth: 2
                 }
             ]
+        },
+        options: {
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'HTTP Request/Responses (Date)'
+                }
+            }
         }
     });
     httpRequestResponsesChart.update();
@@ -1462,6 +1556,14 @@ async function initializeAllCharts() {
                     borderWidth: 2
                 }
             ]
+        },
+        options: {
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'HTTP Request/Responses (URL)'
+                }
+            }
         }
     });
     httpRequestsByUrlChart.update();
@@ -1947,6 +2049,31 @@ async function initializeConfigurationOperations() {
         }
     });
 
+    function encryptOrDecryptConfig(op) {
+        hideErrorInBanner();
+        $("#configEncryptionResult").addClass("d-none");
+        
+        const form = document.getElementById("fmConfigEncryption");
+        if (!form.reportValidity()) {
+            return false;
+        }
+        const configValue = $("#configValue").val();
+        if (actuatorEndpoints.casconfig) {
+            $.post({
+                url: `${actuatorEndpoints.casconfig}/${op}`,
+                data: configValue,
+                contentType: "text/plain"
+            }, data => {
+                $("#configEncryptionResult pre code").text(data);
+                hljs.highlightAll();
+                $("#configEncryptionResult").removeClass("d-none");
+            }).fail((xhr, status, error) => {
+                displayErrorInBanner(xhr);
+                $("#configEncryptionResult").addClass("d-none");
+            });
+        }
+    }
+
     configurationTable.clear();
     if (actuatorEndpoints.env) {
         $.get(actuatorEndpoints.env, response => {
@@ -2048,6 +2175,9 @@ async function initializeConfigurationOperations() {
             displayErrorInBanner(xhr);
         });
     }
+    
+    $("#encryptConfigButton").off().on("click", () => encryptOrDecryptConfig("encrypt"));
+    $("#decryptConfigButton").off().on("click", () => encryptOrDecryptConfig("decrypt"));
 }
 
 async function initializeCasProtocolOperations() {
@@ -2069,14 +2199,288 @@ async function initializeCasProtocolOperations() {
             editor.setReadOnly(true);
             editor.setValue(data);
             editor.gotoLine(1);
+            $("#casProtocolEditorContainer").removeClass("d-none");
         }).fail((xhr, status, error) => {
             displayErrorInBanner(xhr);
+            $("#casProtocolEditorContainer").addClass("d-none");
         });
     }
 
     $("button[name=casProtocolV1Button]").off().on("click", () => buildCasProtocolPayload("validate", "text"));
     $("button[name=casProtocolV2Button]").off().on("click", () => buildCasProtocolPayload("serviceValidate", "xml"));
     $("button[name=casProtocolV3Button]").off().on("click", () => buildCasProtocolPayload("p3/serviceValidate", "xml"));
+}
+
+async function initializeThrottlesOperations() {
+    const throttlesTable = $("#throttlesTable").DataTable({
+        pageLength: 10,
+        autoWidth: false,
+        columnDefs: [
+            {width: "15%", targets: 1},
+            {width: "10%", targets: 2},
+            {width: "15%", targets: 3},
+            {width: "10%", targets: 4},
+            {width: "20%", targets: 5},
+            {width: "10%", targets: 6},
+        ],
+        drawCallback: settings => {
+            $("#throttlesTable tr").addClass("mdc-data-table__row");
+            $("#throttlesTable td").addClass("mdc-data-table__cell");
+        }
+    });
+
+    function fetchThrottledAttempts() {
+        throttlesTable.clear();
+        $.get(actuatorEndpoints.throttles, response => {
+            for (const record of response) {
+
+                let buttons = `
+                     <button type="button" name="removeThrottledAttempt" href="#" 
+                            data-key='${record.key}'
+                            class="mdc-button mdc-button--raised min-width-32x">
+                        <i class="mdi mdi-delete min-width-32x" aria-hidden="true"></i>
+                    </button>
+                `;
+                
+                throttlesTable.row.add({
+                    0: `<code>${record.key}</code>`,
+                    1: `<code>${record.id}</code>`,
+                    2: `<code>${record.value}</code>`,
+                    3: `<code>${record.username}</code>`,
+                    4: `<code>${record.clientIpAddress}</code>`,
+                    5: `<code>${record.expiration}</code>`,
+                    6: `${buttons}`,
+                });
+            }
+            throttlesTable.draw();
+            
+            $("button[name=removeThrottledAttempt]").off().on("click", function () {
+                const key = $(this).data("key");
+                swal({
+                    title: "Are you sure you want to delete this entry?",
+                    text: "Once deleted, you may not be able to recover this entry.",
+                    icon: "warning",
+                    buttons: true,
+                    dangerMode: true
+                })
+                    .then((willDelete) => {
+                        if (willDelete) {
+                            $.ajax({
+                                url: `${actuatorEndpoints.throttles}/${key}`,
+                                type: "DELETE",
+                                contentType: "application/x-www-form-urlencoded",
+                                success: (response, status, xhr) => {
+                                    let nearestTr = $(this).closest("tr");
+                                    throttlesTable.row(nearestTr).remove().draw();
+                                },
+                                error: (xhr, status, error) => {
+                                    console.error("Error fetching data:", error);
+                                    displayErrorInBanner(xhr);
+                                }
+                            });
+                        }
+                    });
+            });
+        }).fail((xhr, status, error) => {
+            console.error("Error fetching data:", error);
+            displayErrorInBanner(xhr);
+        });
+    }
+    
+    if (actuatorEndpoints.throttles) {
+        fetchThrottledAttempts();
+
+        $("button[name=releaseThrottlesButton]").off().on("click", () => {
+            swal({
+                title: "Are you sure you want to release throttled entries?",
+                text: "Released entries, when eligible, will be removed from the authentication throttling store.",
+                icon: "warning",
+                buttons: true,
+                dangerMode: true
+            })
+                .then((willDelete) => {
+                    if (willDelete) {
+                        $.ajax({
+                            url: `${actuatorEndpoints.throttles}`,
+                            type: 'DELETE',
+                            data: {
+                                clear: false
+                            },
+                            success: (response, textStatus, jqXHR) => {
+                                fetchThrottledAttempts();
+                            },
+                            error: (jqXHR, textStatus, errorThrown) => {
+                                displayErrorInBanner(jqXHR);
+                            }
+                        });
+                    }
+                });
+        });
+
+        $("button[name=clearThrottlesButton]").off().on("click", () => {
+            swal({
+                title: "Are you sure you want to clear throttled entries?",
+                text: "All entries will be removed from the authentication throttling store.",
+                icon: "warning",
+                buttons: true,
+                dangerMode: true
+            })
+                .then((willDelete) => {
+                    if (willDelete) {
+                        $.ajax({
+                            url: `${actuatorEndpoints.throttles}`,
+                            type: 'DELETE',
+                            data: {
+                                clear: true
+                            },
+                            success: (response, textStatus, jqXHR) => {
+                                fetchThrottledAttempts();
+                            },
+                            error: (jqXHR, textStatus, errorThrown) => {
+                                displayErrorInBanner(jqXHR);
+                            }
+                        });
+                    }
+                });
+        });
+    }
+}
+
+async function initializeSAML2ProtocolOperations() {
+    $("button[name=saml2ProtocolPostButton]").off().on("click", () => {
+        const form = document.getElementById("fmSaml2Protocol");
+        if (!form.reportValidity()) {
+            return false;
+        }
+        const username = $("#saml2ProtocolUsername").val();
+        const password = $("#saml2ProtocolPassword").val();
+        const entityId = $("#saml2ProtocolEntityId").val();
+
+        $.post(`${actuatorEndpoints.samlpostprofileresponse}`, {
+            username: username,
+            password: password,
+            entityId: entityId
+        }, data => {
+            const editor = initializeAceEditor("saml2ProtocolEditor", "xml");
+            editor.setReadOnly(true);
+            editor.setValue(new XMLSerializer().serializeToString(data));
+            editor.gotoLine(1);
+            $("#saml2ProtocolEditorContainer").removeClass("d-none");
+            $("#saml2ProtocolLogoutEditor").addClass("d-none");
+        }).fail((xhr, status, error) => {
+            displayErrorInBanner(xhr);
+            $("#saml2ProtocolEditorContainer").addClass("d-none");
+        });
+    });
+
+
+    $("button[name=saml2ProtocolLogoutButton]").off().on("click", () => {
+        const entityId = document.getElementById("saml2ProtocolEntityId");
+        if (!entityId.checkValidity()) {
+            entityId.reportValidity();
+            return false;
+        }
+        $.ajax({
+            url: `${actuatorEndpoints.samlpostprofileresponse}/logout/post`,
+            type: 'POST',
+            data: {
+                entityId: $("#saml2ProtocolEntityId").val()
+            },
+            success: (response, textStatus, jqXHR) => {
+                const saml2ProtocolEditor = initializeAceEditor("saml2ProtocolEditor", "html");
+                saml2ProtocolEditor.setReadOnly(true);
+                saml2ProtocolEditor.setValue(response);
+                saml2ProtocolEditor.gotoLine(1);
+
+                const logoutRequest = atob(jqXHR.getResponseHeader("LogoutRequest"));
+                const saml2ProtocolLogoutEditor = initializeAceEditor("saml2ProtocolLogoutEditor", "xml");
+                saml2ProtocolLogoutEditor.setReadOnly(true);
+                saml2ProtocolLogoutEditor.setValue(logoutRequest);
+                saml2ProtocolLogoutEditor.gotoLine(1);
+                
+                $("#saml2ProtocolEditorContainer").removeClass("d-none");
+                $("#saml2ProtocolLogoutEditor").removeClass("d-none");
+            },
+            error: (jqXHR, textStatus, errorThrown) => {
+                displayErrorInBanner(xhr);
+                $("#saml2ProtocolEditorContainer").addClass("d-none");
+                $("#saml2ProtocolLogoutEditor").addClass("d-none");
+            }
+        });
+    });
+
+
+    $("button[name=saml2MetadataCacheInvalidateButton]").off().on("click", () => {
+        hideErrorInBanner();
+        $("#saml2MetadataCacheEditorContainer").addClass("d-none");
+        
+        swal({
+            title: "Are you sure you want to invalidate the cache entry?",
+            text: "Once deleted, the change will take effect immediately.",
+            icon: "warning",
+            buttons: true,
+            dangerMode: true
+        })
+            .then((willDelete) => {
+                if (willDelete) {
+                    $.ajax({
+                        url: `${actuatorEndpoints.samlidpregisteredservicemetadatacache}`,
+                        type: 'DELETE',
+                        data: {
+                            entityId: $("#saml2MetadataCacheEntityId").val(),
+                            serviceId: $("#saml2MetadataCacheService").val()
+                        },
+                        success: (response, textStatus, jqXHR) => {
+                            swal({
+                                title: "Cached metadata record(s) removed.",
+                                text: "Cached metadata entry has been removed successfully.",
+                                buttons: false,
+                                icon: "success",
+                                timer: 1000
+                            });
+                        },
+                        error: (jqXHR, textStatus, errorThrown) => {
+                            displayErrorInBanner(jqXHR);
+                        }
+                    });
+                }
+            });
+    });
+
+    $("button[name=saml2MetadataCacheFetchButton]").off().on("click", function() {
+        hideErrorInBanner();
+
+        $(this).prop("disabled", true);
+        $.ajax({
+            url: `${actuatorEndpoints.samlidpregisteredservicemetadatacache}`,
+            type: 'GET',
+            data: {
+                entityId: $("#saml2MetadataCacheEntityId").val(),
+                serviceId: $("#saml2MetadataCacheService").val()
+            },
+            success: (response, textStatus, jqXHR) => {
+                console.log(response);
+                
+                const editor = initializeAceEditor("saml2MetadataCacheEditor", "xml");
+                editor.setReadOnly(true);
+                for (const [entityId, entry] of Object.entries(response)) {
+                    editor.setValue(entry.metadata);
+                    $("#saml2MetadataCacheDetails").html(`<i class="mdc-tab__icon mdi mdi-clock" aria-hidden="true"></i> Cache Instant: <code>${entry.cachedInstant}</code>`);
+                }
+                editor.gotoLine(1);
+                $("#saml2MetadataCacheEditorContainer").removeClass("d-none");
+                $("#saml2MetadataCacheDetails").removeClass("d-none");
+                $(this).prop("disabled", false)
+            },
+            error: (jqXHR, textStatus, errorThrown) => {
+                displayErrorInBanner(jqXHR);
+                $("#saml2MetadataCacheEditorContainer").addClass("d-none");
+                $("#saml2MetadataCacheDetails").addClass("d-none");
+                $(this).prop("disabled", false)
+            }
+        });
+        
+    });
 }
 
 async function initializePalantir() {
@@ -2094,7 +2498,9 @@ async function initializePalantir() {
             initializePersonDirectoryOperations(),
             initializeAuthenticationOperations(),
             initializeConsentOperations(),
-            initializeCasProtocolOperations()
+            initializeCasProtocolOperations(),
+            initializeSAML2ProtocolOperations(),
+            initializeThrottlesOperations()
         ]);
         setTimeout(() => {
             if (!actuatorEndpoints.registeredservices) {
@@ -2126,7 +2532,7 @@ async function initializePalantir() {
                 $("#accessStrategyTabButton").addClass("d-none");
                 $(`#attribute-tab-${Tabs.ACCESS_STRATEGY}`).addClass("d-none");
             }
-            if (!actuatorEndpoints.ssoSessions) {
+            if (!actuatorEndpoints.ssosessions) {
                 $("#ssoSessionsTabButton").addClass("d-none");
                 $(`#attribute-tab-${Tabs.SSO_SESSIONS}`).addClass("d-none");
             }
@@ -2145,7 +2551,24 @@ async function initializePalantir() {
             if (!actuatorEndpoints.casvalidate) {
                 $("#casProtocolContainer").addClass("d-none");
             }
+            if (!actuatorEndpoints.samlpostprofileresponse) {
+                $("#saml2ProtocolContainer").addClass("d-none");
+            }
+            if (!actuatorEndpoints.casconfig) {
+                $("#config-encryption-tab").addClass("d-none");
+                $("#casConfigSecurity").addClass("d-none");
+            }
             
+            if (!actuatorEndpoints.casvalidate && !actuatorEndpoints.samlpostprofileresponse) {
+                $("#protocolsTabButton").addClass("d-none");
+                $(`#attribute-tab-${Tabs.PROTOCOLS}`).addClass("d-none");
+            }
+
+            if (!actuatorEndpoints.throttles) {
+                $("#throttlesTabButton").addClass("d-none");
+                $(`#attribute-tab-${Tabs.THROTTLES}`).addClass("d-none");
+            }
+
             let visibleCount = $("nav.sidebar-navigation ul li:visible").length;
             console.log("Number of visible list items:", visibleCount);
 
@@ -2186,7 +2609,10 @@ function activateDashboardTab(idx) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    $(".jqueryui-tabs").tabs();
+
     $("nav.sidebar-navigation ul li").off().on("click", function () {
+        hideErrorInBanner();
         $("li").removeClass("active");
         $(this).addClass("active");
         const index = $(this).data("tab-index");
